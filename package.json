@@ -1,0 +1,8 @@
+{
+  "name": "codebeamer-process-handling",
+  "version": "1.0.4",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  }
+}

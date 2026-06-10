@@ -1,0 +1,32 @@
+# Runtime state
+.local-server.pid
+*.log
+server.*.log
+winidea_mcp.log
+
+# Dependencies and bundled runtime
+node_modules/
+runtime/
+
+# Local release artifacts
+release/
+*.zip
+
+# Local CodeBeamer exports and analysis artifacts
+item-*.json
+item-*-fields.json
+tracker-*.json
+tracker-*-full.json
+bug-*.md
+bug-*.pdf
+
+# Local Codex/agent helper files
+skills/
+.agents/
+.codex/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.tmp
+*.bak

@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CodeBeamer Bug 批量流转台</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">CodeBeamer Workflow Desk</p>
+          <h1>Bug 批量流转台</h1>
+          <p class="hero-copy">
+            直接连接 CodeBeamer，按项目和 Bugs Tracker 拉取真实数据，再按 Bug Analyzer、状态和流转规则批量推进下一阶段。
+          </p>
+        </div>
+        <div class="hero-side">
+          <div class="badge">本地代理模式</div>
+          <div class="hero-note">
+            网页通过本地 Node 服务代理访问 CodeBeamer，用来规避浏览器跨域限制。账号密码只在当前页面会话和本地代理请求中使用，不会写入文件。
+          </div>
+        </div>
+      </header>
+
+      <main class="layout">
+        <div class="layout-column layout-column-left">
+          <section class="panel controls-panel">
+            <div class="panel-head">
+              <h2>连接与筛选</h2>
+              <p>先输入连接信息，选择项目和 Bugs Tracker，再加载真实 Bug 列表。</p>
+            </div>
+
+            <div class="section-block compact">
+              <h3>CodeBeamer 连接</h3>
+              <div class="controls-grid">
+                <label class="field">
+                  <span>Base URL</span>
+                  <input
+                    id="baseUrlInput"
+                    type="text"
+                    placeholder="例如 http://172.16.200.236:8080/cb"
+                  />
+                </label>
+
+                <label class="field">
+                  <span>用户名</span>
+                  <input id="usernameInput" type="text" placeholder="例如 SH2307043" />
+                </label>
+
+                <label class="field">
+                  <span>密码</span>
+                  <div id="passwordInputWrap" class="input-clear-wrap single-action">
+                    <input id="passwordInput" type="password" placeholder="输入 CodeBeamer 密码" />
+                    <div class="input-right-actions">
+                      <button
+                        id="passwordToggleButton"
+                        type="button"
+                        class="input-icon-button password-toggle-button"
+                        aria-label="显示密码"
+                        title="显示密码"
+                      >
+                        <svg class="icon-eye icon-eye-open" viewBox="0 0 24 24" aria-hidden="true">
+                          <path
+                            d="M2.2 12c1.9-3.6 5.6-6 9.8-6s7.9 2.4 9.8 6c-1.9 3.6-5.6 6-9.8 6s-7.9-2.4-9.8-6Z"
+                          />
+                          <circle cx="12" cy="12" r="3.2" />
+                        </svg>
+                        <svg class="icon-eye icon-eye-off" viewBox="0 0 24 24" aria-hidden="true">
+                          <path
+                            d="M3 3l18 18m-8-3c-4.2 0-7.9-2.4-9.8-6a12.3 12.3 0 0 1 4.2-4.6m3-1.1A10.9 10.9 0 0 1 12 6c4.2 0 7.9 2.4 9.8 6a12.2 12.2 0 0 1-4.1 4.5M14.1 14.1A3 3 0 0 1 9.9 9.9"
+                          />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                </label>
+
+                <div class="field field-actions">
+                  <span>连接操作</span>
+                  <button id="loadProjectsButton" class="btn btn-primary">读取项目</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="section-block compact">
+              <h3>项目与 Tracker</h3>
+              <div class="controls-grid project-tracker-grid">
+                <label class="field">
+                  <span>项目</span>
+                  <select id="projectSelect" disabled></select>
+                </label>
+
+                <label class="field">
+                  <span>Bugs Tracker</span>
+                  <select id="trackerSelect" disabled></select>
+                </label>
+              </div>
+
+              <div class="actions-row">
+                <button id="loadBugsButton" class="btn btn-primary auto-load-hidden" disabled>加载 Tracker 下的 Bugs</button>
+                <button id="clearSelectionButton" class="btn btn-ghost">清空选择</button>
+              </div>
+            </div>
+
+            <div class="section-block compact">
+              <h3>列表筛选</h3>
+              <div class="controls-grid filters-grid">
+                <label class="field field-wide">
+                  <span>Bug Analyzer</span>
+                  <div class="input-inline">
+                    <div id="analyzerInputWrap" class="input-clear-wrap">
+                      <input
+                        id="analyzerInput"
+                        type="text"
+                        placeholder="输入账号或邮箱，例如 yongsheng.cao"
+                      />
+                      <div class="input-right-actions">
+                        <button
+                          id="analyzerHistoryButton"
+                          type="button"
+                          class="input-icon-button analyzer-history-inline"
+                          aria-label="最近使用记录"
+                          title="最近使用记录"
+                        >
+                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="m7 10 5 5 5-5" />
+                          </svg>
+                        </button>
+                        <button
+                          id="analyzerClearButton"
+                          type="button"
+                          class="input-icon-button analyzer-clear-inline"
+                          aria-label="清空 Bug Analyzer"
+                          title="清空 Bug Analyzer"
+                        >
+                          ×
+                        </button>
+                      </div>
+                      <div id="analyzerHistoryMenu" class="input-history-menu"></div>
+                    </div>
+                  </div>
+                </label>
+
+                <label class="field">
+                  <span>Affected Variant/s</span>
+                  <select id="affectedVariantSelect" disabled></select>
+                </label>
+
+                <label class="field">
+                  <span>状态</span>
+                  <select id="statusSelect" disabled></select>
+                </label>
+              </div>
+            </div>
+
+            <div id="loadMessage" class="callout muted"></div>
+            <div class="stats-grid" id="statsGrid"></div>
+          </section>
+
+          <section class="panel transition-panel">
+            <div class="panel-head">
+              <h2>批量流转表单</h2>
+              <p id="transitionSummary">请先筛选并选择同一状态的 Bug。</p>
+            </div>
+
+            <div id="transitionBody" class="transition-body"></div>
+
+            <div class="actions-row">
+              <button id="previewButton" class="btn btn-ghost">仅校验</button>
+              <button id="executeButton" class="btn btn-primary">执行实际流转</button>
+            </div>
+          </section>
+
+          <section class="panel preview-panel">
+            <div class="panel-head">
+              <h2>校验结果</h2>
+              <p>这里会显示校验结果、实际请求体、接口响应内容，以及回读验证结果，便于排查错误。</p>
+            </div>
+
+            <div id="validationSummary" class="callout muted">尚未生成校验结果。</div>
+            <pre id="payloadPreview" class="payload-preview"></pre>
+          </section>
+        </div>
+
+        <div class="layout-column layout-column-right">
+          <section class="panel list-panel">
+            <div class="panel-head">
+              <h2>Bug 列表</h2>
+              <p id="listSummary">尚未加载数据。</p>
+            </div>
+
+            <div class="toolbar">
+              <label class="checkbox-line">
+                <input id="selectAllVisible" type="checkbox" />
+                <span>选择当前页筛选结果中的同状态 Bug</span>
+              </label>
+              <div id="selectionHint" class="selection-hint"></div>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th class="checkbox-col">选择</th>
+                    <th>ID</th>
+                    <th>摘要</th>
+                    <th>状态</th>
+                    <th>Bug Analyzer</th>
+                    <th>负责人</th>
+                    <th>Affects Version/s</th>
+                    <th>阶段就绪度</th>
+                  </tr>
+                </thead>
+                <tbody id="bugsTableBody"></tbody>
+              </table>
+            </div>
+
+            <div class="pagination-bar">
+              <div id="paginationSummary" class="selection-hint"></div>
+              <div class="pagination-controls">
+                <label class="field inline-field">
+                  <span>每页</span>
+                  <select id="pageSizeSelect">
+                    <option value="25">25</option>
+                    <option value="50" selected>50</option>
+                    <option value="100">100</option>
+                    <option value="200">200</option>
+                  </select>
+                </label>
+                <button id="prevPageButton" type="button" class="btn btn-ghost">上一页</button>
+                <div id="pageIndicator" class="selection-hint"></div>
+                <button id="nextPageButton" type="button" class="btn btn-ghost">下一页</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
