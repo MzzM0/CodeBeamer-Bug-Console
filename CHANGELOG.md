@@ -1,5 +1,15 @@
 # 更新日志
 
+## v1.0.5 - 2026-06-10
+
+- 兼容不同 Bugs Tracker 的 `Status` 枚举差异，`Implementing` 与旧拼写 `Implmenting` 会根据当前 item 可用选项自动匹配，回读校验也视为等价。
+- 将关闭态统一对齐为 CodeBeamer 真实枚举 `Closed`，并兼容旧的 `Close` 写法。
+- 优化 `Bug Analyzer` 筛选记忆：首次登录默认填充当前用户邮箱，已有记忆时恢复上次内容，最近记录保留 3 条去重值，并支持将空白筛选作为一种历史状态。
+- 在逐条填写区域为每个 Bug 标题添加真实 CodeBeamer 链接，点击后可在新标签页打开对应 Bug，便于填写根因、方案和 Comment。
+- 为 `WikiTextField` 写入增加 CodeBeamer Wiki 文本格式化，普通文本会自动套用字体、字号和颜色样式，并在回读校验时忽略格式标记差异。
+- 新增当前用户开机自启安装与卸载脚本：`install-startup.bat` / `uninstall-startup.bat`。
+- 补充 GitHub 源码管理说明，并整理 `.gitignore` / `.gitattributes`，避免运行日志、发布包、导出 JSON 和本地分析文档入库。
+
 ## v1.0.4 - 2026-06-03
 
 - 取消页面心跳触发的自动关闭机制，本地服务只通过 `stop-local.bat` 手动关闭。
