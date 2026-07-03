@@ -1,5 +1,10 @@
 # 更新日志
 
+## v1.0.7 - 2026-07-03
+
+- 将 `runtime/node.exe` 纳入 GitHub 源码仓库，使 clone 后的仓库也能直接运行 `launch-local.bat`，无需额外安装 Node.js。
+- 调整 `.gitignore`，继续忽略 `release/` 发布包，但保留根目录 `runtime/` 作为运行依赖。
+
 ## v1.0.6 - 2026-07-03
 
 - 在 Bug 列表工具栏新增 `刷新列表` 按钮，可在当前项目和 Bugs Tracker 下重新从 CodeBeamer 拉取 Bug 数据。

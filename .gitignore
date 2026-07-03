@@ -4,9 +4,8 @@
 server.*.log
 winidea_mcp.log
 
-# Dependencies and bundled runtime
+# Dependencies
 node_modules/
-runtime/
 
 # Local release artifacts
 release/
