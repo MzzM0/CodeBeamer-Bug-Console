@@ -549,6 +549,14 @@ textarea {
   margin-top: 18px;
 }
 
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+
 .checkbox-line {
   display: inline-flex;
   align-items: center;
@@ -871,6 +879,12 @@ tbody tr:hover {
   .toolbar {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .toolbar-actions {
+    width: 100%;
+    justify-content: space-between;
+    flex-wrap: wrap;
   }
 
   .pagination-bar {

@@ -1,5 +1,10 @@
 # 更新日志
 
+## v1.0.6 - 2026-07-03
+
+- 在 Bug 列表工具栏新增 `刷新列表` 按钮，可在当前项目和 Bugs Tracker 下重新从 CodeBeamer 拉取 Bug 数据。
+- 刷新时保留当前筛选条件并重新应用筛选，同时清空已勾选 Bug 和校验结果，避免 CodeBeamer 页面外部操作后列表状态不同步。
+
 ## v1.0.5 - 2026-06-10
 
 - 兼容不同 Bugs Tracker 的 `Status` 枚举差异，`Implementing` 与旧拼写 `Implmenting` 会根据当前 item 可用选项自动匹配，回读校验也视为等价。

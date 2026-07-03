@@ -194,6 +194,7 @@ const els = {
   listSummary: document.getElementById("listSummary"),
   selectAllVisible: document.getElementById("selectAllVisible"),
   selectionHint: document.getElementById("selectionHint"),
+  refreshBugsButton: document.getElementById("refreshBugsButton"),
   bugsTableBody: document.getElementById("bugsTableBody"),
   paginationSummary: document.getElementById("paginationSummary"),
   pageSizeSelect: document.getElementById("pageSizeSelect"),
@@ -248,6 +249,7 @@ function bindEvents() {
   els.affectedVariantSelect.addEventListener("change", handleAffectedVariantFilterChange);
   els.statusSelect.addEventListener("change", handleStatusFilterChange);
   els.selectAllVisible.addEventListener("change", toggleSelectAllVisible);
+  els.refreshBugsButton.addEventListener("click", refreshBugs);
   els.pageSizeSelect.addEventListener("change", handlePageSizeChange);
   els.prevPageButton.addEventListener("click", goToPreviousPage);
   els.nextPageButton.addEventListener("click", goToNextPage);
@@ -1128,6 +1130,11 @@ async function loadBugs() {
   }
 }
 
+async function refreshBugs() {
+  clearSelectionState();
+  await loadBugs();
+}
+
 function updateConnectionButtons() {
   const busy = state.loading.projects || state.loading.trackers || state.loading.bugs || state.loading.transition;
   els.loadProjectsButton.disabled = busy;
@@ -1136,6 +1143,10 @@ function updateConnectionButtons() {
   els.loadBugsButton.disabled =
     busy ||
     !state.connection.trackerId;
+  els.refreshBugsButton.disabled =
+    busy ||
+    !state.connection.trackerId ||
+    !state.bugs.length;
   els.clearSelectionButton.disabled = state.loading.transition;
   els.affectedVariantSelect.disabled = !state.bugs.length || state.loading.transition;
   els.statusSelect.disabled = !state.bugs.length || state.loading.transition;
