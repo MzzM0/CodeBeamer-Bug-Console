@@ -1,52 +1,69 @@
-# CodeBeamer Bug 批量流转工具免安装版
+﻿# CodeBeamer 我的 Bug 工作台（免安装版）
 
-当前发布版本：`v1.0.7`
+当前版本：`v2.1.0`
 
-## 特点
+## 主要功能
 
-- 不需要额外安装 Node.js
-- 解压后即可直接运行
-- 浏览器会自动打开本地页面
+### 我的 Bug 总览
+
+登录 CodeBeamer 后，工具会自动：
+
+1. 读取当前账号可访问的全部项目；
+2. 找出各项目中的 Bug / Bugs Tracker；
+3. 扫描 Bug，并根据当前登录用户的 ID、邮箱和用户名识别与本人相关的条目；
+4. 汇总展示跨项目 Bug，并支持按项目、本人角色、状态和关键词筛选。
+
+当前识别的“与我相关”关系包括：
+
+- 负责人（Assigned To）
+- 创建人
+- Owner
+- Bug Analyzer
+- Bug Tester
+- Bug Approver
+- Bug Reporter / Reporter / Assignee
+
+表格中的 Bug ID 和摘要可以直接跳转到 CodeBeamer 原始页面。
+
+### 从总览带入批量流转
+
+“我的 Bug 总览”与“批量流转工具”保持为两个独立工作区，避免筛选、查看和流程表单拥挤在同一界面：
+
+1. 在跨项目总览中勾选需要处理的 Bug（选择可跨分页和筛选保留）；
+2. 点击“批量流转所选”；
+3. 工具只读取所选 Bug 的完整字段，并自动切换到独立的批量流转工作区；
+4. 继续使用原有字段填写、校验、真实流转和回读验证流程。
+
+出于流程与字段安全考虑，同一批次必须属于**同一项目、同一 Tracker、同一工作流状态**，且该状态已配置批量流转规则。选择第一条后，其他不兼容条目会暂时禁用；清空选择后可重新选择其他批次。
+
+### 批量流转工具
+
+原来的单项目、单 Bugs Tracker 批量流转功能仍然保留。登录后切换到“批量流转工具”页签即可继续使用：
+
+- 按 Bug Analyzer、Affected Variant/s 和状态筛选；
+- 同状态批量选择；
+- 按既有阶段规则填写字段、校验并实际流转；
+- 提交后自动回读验证。
 
 ## 使用方法
 
-1. 解压整个压缩包到任意目录。
-2. 双击 `launch-local.bat`。
-3. 浏览器会自动打开 `http://127.0.0.1:3080`。
-4. 在页面中输入：
-   - `Base URL`
-   - `用户名`
-   - `密码`
-5. 读取项目后，选择目标项目和 Bugs Tracker，即可开始使用。
+1. 双击 `launch-local.bat`；
+2. 浏览器自动打开 `http://127.0.0.1:3080`；
+3. 输入 Base URL、用户名和密码；
+4. 点击“登录并加载我的 Bug”；
+5. 在默认总览中查看跨项目 Bug，或切换到“批量流转工具”。
 
-## 关闭方法
+首次跨项目扫描需要逐个读取有权限的 Bug，项目和历史 Bug 较多时可能需要几分钟。单个项目或 Tracker 无权限时不会中断整体加载，页面会显示对应警告。
 
-- 双击 `stop-local.bat`。
+## 关闭与开机自启
 
-## 开机自启
+- 关闭：双击 `stop-local.bat`。
+- 安装当前 Windows 用户开机自启：双击 `install-startup.bat`。
+- 取消开机自启：双击 `uninstall-startup.bat`。
 
-- 双击 `install-startup.bat` 后，会为当前 Windows 用户添加开机自启快捷方式，不需要管理员权限。
-- 之后每次登录 Windows 时会自动启动本地服务并打开页面。
-- 如需取消开机自启，双击 `uninstall-startup.bat`。
+## 安全与运行说明
 
-## 注意事项
-
-- 请不要删除 `runtime` 目录，其中包含运行所需的内置 Node 运行时。
-- GitHub 仓库已包含 `runtime/node.exe`，clone 后无需额外安装 Node.js。
-- 本工具默认监听本机 `3080` 端口。
-- 账号密码不会写入本地文件，只用于当前页面和本地代理请求。
-
-## 源码管理
-
-- 建议将源码上传到 GitHub 仓库管理，`release` 发布包、运行日志、`.pid`、CodeBeamer 导出 JSON 和本地分析文档默认不入库。
-- 需要分发给其他人使用时，可以将 `release` 下的 zip 作为 GitHub Release 附件或单独发送。
-- 首次关联 GitHub 仓库时，可在安装 Git 后执行：
-
-```powershell
-git init
-git add .
-git commit -m "Initial commit"
-git branch -M main
-git remote add origin <你的 GitHub 仓库地址>
-git push -u origin main
-```
+- 工具只监听本机 `127.0.0.1:3080`。
+- 账号密码不会写入本地文件，只存在于当前浏览器页面并随本地代理请求使用。
+- `runtime/node.exe` 是免安装运行依赖，请勿删除 `runtime` 目录。
+- 关闭状态等数据均实时来自 CodeBeamer；刷新总览可重新扫描全部项目。

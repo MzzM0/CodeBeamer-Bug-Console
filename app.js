@@ -128,6 +128,11 @@ const state = {
   projects: [],
   trackers: [],
   bugs: [],
+  myBugs: [],
+  myBugsSummary: null,
+  myBugsWarnings: [],
+  mySelectedIds: new Set(),
+  workflowSource: null,
   currentUser: null,
   releaseItems: [],
   projectMembers: [],
@@ -147,6 +152,16 @@ const state = {
     affectedVariant: "",
     status: "all",
   },
+  myBugFilters: {
+    project: "all",
+    role: "all",
+    status: "all",
+    keyword: "",
+  },
+  myBugPagination: {
+    page: 1,
+    pageSize: 25,
+  },
   pagination: {
     page: 1,
     pageSize: 50,
@@ -159,6 +174,7 @@ const state = {
     projects: false,
     trackers: false,
     bugs: false,
+    myBugs: false,
     transition: false,
   },
   history: {
@@ -168,10 +184,36 @@ const state = {
   ui: {
     analyzingCommentMode: "shared",
     includeInitialInvestigation: false,
+    activeView: "my-bugs",
+    workflowInitialized: false,
   },
 };
 
 const els = {
+  tabMyBugsButton: document.getElementById("tabMyBugsButton"),
+  tabWorkflowButton: document.getElementById("tabWorkflowButton"),
+  myBugsView: document.getElementById("myBugsView"),
+  workflowView: document.getElementById("workflowView"),
+  currentUserBadge: document.getElementById("currentUserBadge"),
+  myBugsMessage: document.getElementById("myBugsMessage"),
+  myBugsStats: document.getElementById("myBugsStats"),
+  myBugsSummary: document.getElementById("myBugsSummary"),
+  myBugsRefreshButton: document.getElementById("myBugsRefreshButton"),
+  myProjectFilter: document.getElementById("myProjectFilter"),
+  myRoleFilter: document.getElementById("myRoleFilter"),
+  myStatusFilter: document.getElementById("myStatusFilter"),
+  myKeywordFilter: document.getElementById("myKeywordFilter"),
+  myBugsTableBody: document.getElementById("myBugsTableBody"),
+  myPaginationSummary: document.getElementById("myPaginationSummary"),
+  myPageSizeSelect: document.getElementById("myPageSizeSelect"),
+  myPrevPageButton: document.getElementById("myPrevPageButton"),
+  myNextPageButton: document.getElementById("myNextPageButton"),
+  myPageIndicator: document.getElementById("myPageIndicator"),
+  mySelectAllVisible: document.getElementById("mySelectAllVisible"),
+  mySelectionHint: document.getElementById("mySelectionHint"),
+  myClearSelectionButton: document.getElementById("myClearSelectionButton"),
+  sendSelectedToWorkflowButton: document.getElementById("sendSelectedToWorkflowButton"),
+  workflowSourceBanner: document.getElementById("workflowSourceBanner"),
   baseUrlInput: document.getElementById("baseUrlInput"),
   usernameInput: document.getElementById("usernameInput"),
   passwordInput: document.getElementById("passwordInput"),
@@ -215,6 +257,7 @@ document.addEventListener("DOMContentLoaded", () => {
   populateProjectOptions();
   populateTrackerOptions();
   populateStatusOptions();
+  renderMyBugsDashboard();
   renderAll();
 
   if (window.location.protocol === "file:") {
@@ -232,6 +275,21 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 function bindEvents() {
+  els.tabMyBugsButton.addEventListener("click", () => switchView("my-bugs"));
+  els.tabWorkflowButton.addEventListener("click", () => switchView("workflow"));
+  els.myBugsRefreshButton.addEventListener("click", loadProjects);
+  els.myProjectFilter.addEventListener("change", handleMyBugFilterChange);
+  els.myRoleFilter.addEventListener("change", handleMyBugFilterChange);
+  els.myStatusFilter.addEventListener("change", handleMyBugFilterChange);
+  els.myKeywordFilter.addEventListener("input", handleMyBugFilterChange);
+  els.myPageSizeSelect.addEventListener("change", handleMyBugPageSizeChange);
+  els.myPrevPageButton.addEventListener("click", () => changeMyBugPage(-1));
+  els.myNextPageButton.addEventListener("click", () => changeMyBugPage(1));
+  els.mySelectAllVisible.addEventListener("change", toggleSelectAllVisibleMyBugs);
+  els.myClearSelectionButton.addEventListener("click", clearMyBugSelection);
+  els.sendSelectedToWorkflowButton.addEventListener("click", sendSelectedMyBugsToWorkflow);
+  els.myBugsTableBody.addEventListener("change", handleMyBugSelectionChange);
+
   els.baseUrlInput.addEventListener("input", syncConnectionFromInputs);
   els.usernameInput.addEventListener("input", syncConnectionFromInputs);
   els.passwordInput.addEventListener("input", syncConnectionFromInputs);
@@ -868,39 +926,61 @@ async function apiPost(path, body) {
 async function loadProjects() {
   try {
     const auth = validateAuthPayload();
-    await loadCurrentUser(auth);
-    applyAnalyzerFromUsername();
     state.loading.projects = true;
+    state.loading.myBugs = true;
     updateConnectionButtons();
-    setLoadMessage("\u6b63\u5728\u8bfb\u53d6\u9879\u76ee\u5217\u8868...", "muted");
+    setMyBugsMessage(
+      "\u6b63\u5728\u9a8c\u8bc1\u8d26\u53f7\u5e76\u626b\u63cf\u6240\u6709\u53ef\u8bbf\u95ee\u9879\u76ee\u7684 Bug Tracker\uff0c\u9996\u6b21\u52a0\u8f7d\u53ef\u80fd\u9700\u8981\u51e0\u5206\u949f...",
+      "muted",
+    );
 
-    const payload = await apiPost("/api/projects", auth);
+    const payload = await apiPost("/api/my-bugs", auth);
+    state.currentUser = payload.user || null;
     state.projects = payload.projects || [];
+    state.myBugs = payload.items || [];
+    state.myBugsSummary = payload.summary || null;
+    state.myBugsWarnings = payload.warnings || [];
+    state.mySelectedIds.clear();
+    clearWorkflowSource();
+    state.trackers = [];
+    state.connection.trackerId = "";
+    state.ui.workflowInitialized = false;
+    state.myBugFilters = { project: "all", role: "all", status: "all", keyword: "" };
+    state.myBugPagination.page = 1;
+    els.myKeywordFilter.value = "";
 
-    if (!state.projects.length) {
-      throw new Error("\u672a\u8bfb\u53d6\u5230\u4efb\u4f55\u9879\u76ee\u3002");
-    }
-
+    applyAnalyzerFromUsername();
     const rememberedProjectId = getRememberedProjectId();
     if (rememberedProjectId && state.projects.some((project) => String(project.id) === rememberedProjectId)) {
       state.connection.projectId = rememberedProjectId;
-    } else if (!state.projects.some((project) => String(project.id) === String(state.connection.projectId))) {
-      state.connection.projectId = String(state.projects[0].id);
-    }
-
-    persistProjectPreference();
-    populateProjectOptions();
-    await loadProjectRelatedOptions(state.connection.projectId);
-    if (state.connection.trackerId) {
-      await loadBugs();
     } else {
-      setLoadMessage(`\u5df2\u8bfb\u53d6 ${state.projects.length} \u4e2a\u9879\u76ee\uff0c\u4f46\u5f53\u524d\u9879\u76ee\u4e0b\u6ca1\u6709\u53ef\u81ea\u52a8\u52a0\u8f7d\u7684 Bugs Tracker\u3002`, "warn");
+      state.connection.projectId = state.projects.length ? String(state.projects[0].id) : "";
     }
+    populateProjectOptions();
+    populateTrackerOptions();
+    populateMyBugFilterOptions();
+    persistProjectPreference();
+
+    const warningSuffix = state.myBugsWarnings.length
+      ? `\uff0c${state.myBugsWarnings.length} \u9879\u8b66\u544a\u53ef\u5728\u63d0\u793a\u4e2d\u67e5\u770b`
+      : "";
+    setMyBugsMessage(
+      `\u5df2\u5728 ${payload.summary?.projectCount || state.projects.length} \u4e2a\u9879\u76ee\u3001${payload.summary?.trackerCount || 0} \u4e2a Bug Tracker \u4e2d\u627e\u5230 ${state.myBugs.length} \u6761\u4e0e\u4f60\u76f8\u5173\u7684 Bug${warningSuffix}\u3002`,
+      state.myBugsWarnings.length ? "warn" : "good",
+    );
   } catch (error) {
-    setLoadMessage(`\u8bfb\u53d6\u9879\u76ee\u5931\u8d25\uff1a${error.message}`, "warn");
+    state.currentUser = null;
+    state.myBugs = [];
+    state.myBugsSummary = null;
+    state.myBugsWarnings = [];
+    state.mySelectedIds.clear();
+    clearWorkflowSource();
+    setMyBugsMessage(`\u767b\u5f55\u6216\u52a0\u8f7d\u5931\u8d25\uff1a${error.message}`, "warn");
   } finally {
     state.loading.projects = false;
+    state.loading.myBugs = false;
     updateConnectionButtons();
+    renderMyBugsDashboard();
   }
 }
 
@@ -914,6 +994,7 @@ async function loadCurrentUser(auth) {
 }
 
 async function handleProjectChange(event) {
+  clearWorkflowSource();
   state.connection.projectId = event.target.value;
   state.connection.trackerId = "";
   state.trackers = [];
@@ -974,7 +1055,7 @@ async function loadTrackers(projectId) {
   const payload = await apiPost("/api/trackers", {
     ...auth,
     projectId,
-    nameIncludes: "bugs",
+    bugTrackersOnly: true,
   });
 
   state.trackers = payload.trackers || [];
@@ -1070,6 +1151,7 @@ async function loadBugSourceOptions(trackerId) {
 }
 
 async function handleTrackerChange(event) {
+  clearWorkflowSource();
   state.connection.trackerId = event.target.value;
   persistTrackerPreference();
   els.loadBugsButton.disabled = !state.connection.trackerId;
@@ -1096,6 +1178,7 @@ async function handleTrackerChange(event) {
 }
 
 async function loadBugs() {
+  clearWorkflowSource();
   try {
     const auth = validateAuthPayload();
     if (!state.connection.projectId || !state.connection.trackerId) {
@@ -1136,8 +1219,10 @@ async function refreshBugs() {
 }
 
 function updateConnectionButtons() {
-  const busy = state.loading.projects || state.loading.trackers || state.loading.bugs || state.loading.transition;
+  const busy = state.loading.projects || state.loading.trackers || state.loading.bugs || state.loading.myBugs || state.loading.transition;
   els.loadProjectsButton.disabled = busy;
+  els.loadProjectsButton.textContent = state.loading.myBugs ? "正在扫描..." : "登录并加载我的 Bug";
+  els.myBugsRefreshButton.disabled = busy || !state.currentUser;
   els.projectSelect.disabled = state.loading.projects || state.loading.transition || !state.projects.length;
   els.trackerSelect.disabled = state.loading.trackers || state.loading.transition || !state.trackers.length;
   els.loadBugsButton.disabled =
@@ -1523,6 +1608,368 @@ function flattenNames(list) {
     .map((item) => item?.name || item?.email || item?.id || "")
     .filter(Boolean)
     .join("; ");
+}
+
+async function switchView(viewName, options = {}) {
+  const isWorkflow = viewName === "workflow";
+  state.ui.activeView = isWorkflow ? "workflow" : "my-bugs";
+  els.myBugsView.hidden = isWorkflow;
+  els.workflowView.hidden = !isWorkflow;
+  els.tabMyBugsButton.classList.toggle("active", !isWorkflow);
+  els.tabWorkflowButton.classList.toggle("active", isWorkflow);
+
+  if (isWorkflow && state.projects.length && !state.ui.workflowInitialized && options.initialize !== false) {
+    state.ui.workflowInitialized = true;
+    try {
+      await loadProjectRelatedOptions(state.connection.projectId);
+      if (state.connection.trackerId) await loadBugs();
+    } catch (error) {
+      state.ui.workflowInitialized = false;
+      setLoadMessage(`\u6279\u91cf\u6d41\u8f6c\u89c6\u56fe\u521d\u59cb\u5316\u5931\u8d25\uff1a${error.message}`, "warn");
+    }
+  }
+}
+
+function setMyBugsMessage(message, tone = "muted") {
+  if (!els.myBugsMessage) return;
+  const warningDetails = state.myBugsWarnings.length
+    ? `\n${state.myBugsWarnings.map((warning) => `\u2022 ${warning}`).join("\n")}`
+    : "";
+  els.myBugsMessage.textContent = `${message}${warningDetails}`;
+  els.myBugsMessage.className = `callout ${tone}`;
+}
+
+function populateMyBugFilterOptions() {
+  const projects = [...new Map(state.myBugs.map((bug) => [String(bug.project?.id || bug.project?.name), bug.project])).values()]
+    .filter(Boolean)
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "zh-CN"));
+  const roles = [...new Set(state.myBugs.flatMap((bug) => bug.matchedRoles || []))].sort();
+  const statuses = [...new Set(state.myBugs.map((bug) => normalizeWorkflowStatus(bug.status)))].sort();
+
+  fillDashboardSelect(els.myProjectFilter, "all", "\u5168\u90e8\u9879\u76ee", projects.map((project) => ({
+    value: String(project.id || project.name),
+    label: project.name || String(project.id),
+  })), state.myBugFilters.project);
+  fillDashboardSelect(els.myRoleFilter, "all", "\u5168\u90e8\u89d2\u8272", roles.map((role) => ({ value: role, label: role })), state.myBugFilters.role);
+  fillDashboardSelect(els.myStatusFilter, "all", "\u5168\u90e8\u72b6\u6001", statuses.map((status) => ({ value: status, label: status })), state.myBugFilters.status);
+
+  [els.myProjectFilter, els.myRoleFilter, els.myStatusFilter, els.myKeywordFilter].forEach((element) => {
+    element.disabled = !state.myBugs.length || state.loading.myBugs;
+  });
+}
+
+function fillDashboardSelect(select, defaultValue, defaultLabel, options, selectedValue) {
+  if (!select) return;
+  select.innerHTML = `<option value="${escapeAttr(defaultValue)}">${escapeHtml(defaultLabel)}</option>${options
+    .map((option) => `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label)}</option>`)
+    .join("")}`;
+  select.value = options.some((option) => option.value === selectedValue) ? selectedValue : defaultValue;
+}
+
+function handleMyBugFilterChange() {
+  state.myBugFilters.project = els.myProjectFilter.value;
+  state.myBugFilters.role = els.myRoleFilter.value;
+  state.myBugFilters.status = els.myStatusFilter.value;
+  state.myBugFilters.keyword = els.myKeywordFilter.value.trim();
+  state.myBugPagination.page = 1;
+  renderMyBugsDashboard();
+}
+
+function handleMyBugPageSizeChange(event) {
+  state.myBugPagination.pageSize = Math.max(1, Number(event.target.value) || 25);
+  state.myBugPagination.page = 1;
+  renderMyBugsDashboard();
+}
+
+function changeMyBugPage(delta) {
+  const filtered = getFilteredMyBugs();
+  const pageCount = Math.max(1, Math.ceil(filtered.length / state.myBugPagination.pageSize));
+  state.myBugPagination.page = Math.min(pageCount, Math.max(1, state.myBugPagination.page + delta));
+  renderMyBugsDashboard();
+}
+
+function getFilteredMyBugs() {
+  const keyword = state.myBugFilters.keyword.toLowerCase();
+  return state.myBugs.filter((bug) => {
+    const projectKey = String(bug.project?.id || bug.project?.name || "");
+    const projectMatch = state.myBugFilters.project === "all" || projectKey === state.myBugFilters.project;
+    const roles = bug.matchedRoles || [];
+    const roleMatch = state.myBugFilters.role === "all" || roles.includes(state.myBugFilters.role);
+    const status = normalizeWorkflowStatus(bug.status);
+    const statusMatch = state.myBugFilters.status === "all" || status === state.myBugFilters.status;
+    const haystack = [
+      bug.id,
+      bug.name,
+      bug.project?.name,
+      bug.tracker?.name,
+      status,
+      bug.assignedTo,
+      bug.fields?.["Bug Analyzer"],
+      roles.join(" "),
+    ].join(" ").toLowerCase();
+    return projectMatch && roleMatch && statusMatch && (!keyword || haystack.includes(keyword));
+  });
+}
+
+function getSelectedMyBugs() {
+  return state.myBugs.filter((bug) => state.mySelectedIds.has(Number(bug.id)));
+}
+
+function getMyBugSelectionAnchor() {
+  return getSelectedMyBugs()[0] || null;
+}
+
+function getMyBugCompatibility(bug, anchor = getMyBugSelectionAnchor()) {
+  const status = normalizeWorkflowStatus(bug?.status);
+  if (!TRANSITION_RULES[status]) {
+    return { ok: false, reason: `\u72b6\u6001 ${status} \u6682\u672a\u914d\u7f6e\u6279\u91cf\u6d41\u8f6c\u89c4\u5219` };
+  }
+  if (!bug?.project?.id || !bug?.tracker?.id) {
+    return { ok: false, reason: "\u7f3a\u5c11\u9879\u76ee\u6216 Tracker \u4fe1\u606f" };
+  }
+  if (!anchor) return { ok: true, reason: "" };
+  if (String(bug.project.id) !== String(anchor.project?.id)) {
+    return { ok: false, reason: "\u9700\u4e0e\u5df2\u9009 Bug \u5c5e\u4e8e\u540c\u4e00\u9879\u76ee" };
+  }
+  if (String(bug.tracker.id) !== String(anchor.tracker?.id)) {
+    return { ok: false, reason: "\u9700\u4e0e\u5df2\u9009 Bug \u5c5e\u4e8e\u540c\u4e00 Tracker" };
+  }
+  if (status !== normalizeWorkflowStatus(anchor.status)) {
+    return { ok: false, reason: "\u9700\u4e0e\u5df2\u9009 Bug \u5904\u4e8e\u540c\u4e00\u72b6\u6001" };
+  }
+  return { ok: true, reason: "" };
+}
+
+function getVisibleMyBugs() {
+  const filtered = getFilteredMyBugs();
+  const pageSize = Math.max(1, Number(state.myBugPagination.pageSize) || 25);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const page = Math.min(pageCount, Math.max(1, state.myBugPagination.page));
+  return filtered.slice((page - 1) * pageSize, page * pageSize);
+}
+
+function handleMyBugSelectionChange(event) {
+  const checkbox = event.target.closest(".my-bug-select");
+  if (!checkbox) return;
+  const itemId = Number(checkbox.dataset.itemId);
+  const bug = state.myBugs.find((entry) => Number(entry.id) === itemId);
+  if (!bug) return;
+  if (checkbox.checked) {
+    const compatibility = getMyBugCompatibility(bug);
+    if (!compatibility.ok) {
+      checkbox.checked = false;
+      setMyBugsMessage(`\u65e0\u6cd5\u9009\u62e9 Bug #${itemId}\uff1a${compatibility.reason}\u3002`, "warn");
+      return;
+    }
+    state.mySelectedIds.add(itemId);
+  } else {
+    state.mySelectedIds.delete(itemId);
+  }
+  renderMyBugsDashboard();
+}
+
+function toggleSelectAllVisibleMyBugs(event) {
+  const visible = getVisibleMyBugs();
+  if (event.target.checked) {
+    let anchor = getMyBugSelectionAnchor();
+    for (const bug of visible) {
+      const compatibility = getMyBugCompatibility(bug, anchor);
+      if (!compatibility.ok) continue;
+      state.mySelectedIds.add(Number(bug.id));
+      anchor ||= bug;
+    }
+  } else {
+    visible.forEach((bug) => state.mySelectedIds.delete(Number(bug.id)));
+  }
+  renderMyBugsDashboard();
+}
+
+function clearMyBugSelection() {
+  state.mySelectedIds.clear();
+  renderMyBugsDashboard();
+}
+
+function validateMyBugSelection(selected) {
+  if (!selected.length) throw new Error("\u8bf7\u5148\u5728\u603b\u89c8\u4e2d\u9009\u62e9\u81f3\u5c11\u4e00\u6761 Bug\u3002");
+  const anchor = selected[0];
+  for (const bug of selected) {
+    const compatibility = getMyBugCompatibility(bug, anchor);
+    if (!compatibility.ok) throw new Error(`Bug #${bug.id} ${compatibility.reason}?`);
+  }
+  return {
+    projectId: Number(anchor.project.id),
+    trackerId: Number(anchor.tracker.id),
+    status: normalizeWorkflowStatus(anchor.status),
+    projectName: anchor.project.name || "",
+    trackerName: anchor.tracker.name || "",
+    itemIds: selected.map((bug) => Number(bug.id)),
+  };
+}
+
+async function sendSelectedMyBugsToWorkflow() {
+  try {
+    const auth = validateAuthPayload();
+    const selection = validateMyBugSelection(getSelectedMyBugs());
+    state.loading.bugs = true;
+    updateConnectionButtons();
+    renderMyBugsDashboard();
+    setMyBugsMessage(`\u6b63\u5728\u51c6\u5907 ${selection.itemIds.length} \u6761\u6240\u9009 Bug \u7684\u5b8c\u6574\u5b57\u6bb5\u4fe1\u606f...`, "muted");
+
+    state.connection.projectId = String(selection.projectId);
+    state.connection.trackerId = "";
+    populateProjectOptions();
+    await loadProjectRelatedOptions(selection.projectId);
+    if (!state.trackers.some((tracker) => Number(tracker.id) === selection.trackerId)) {
+      throw new Error(`\u9879\u76ee\u4e2d\u672a\u627e\u5230\u6240\u9009 Tracker #${selection.trackerId}\uff0c\u53ef\u80fd\u5df2\u65e0\u8bbf\u95ee\u6743\u9650\u3002`);
+    }
+    state.connection.trackerId = String(selection.trackerId);
+    populateTrackerOptions();
+    await Promise.all([
+      loadImpactedTeamOptions(selection.trackerId),
+      loadBugSourceOptions(selection.trackerId),
+    ]);
+    persistProjectPreference();
+    persistTrackerPreference();
+
+    const payload = await apiPost("/api/bugs/selected", {
+      ...auth,
+      projectId: selection.projectId,
+      trackerId: selection.trackerId,
+      itemIds: selection.itemIds,
+    });
+    ingestData(payload);
+    state.selectedIds = new Set(selection.itemIds);
+    state.filters.analyzer = "";
+    state.filters.affectedVariant = "";
+    els.analyzerInput.value = "";
+    populateAffectedVariantOptions();
+    state.filters.status = selection.status;
+    populateStatusOptions();
+    state.workflowSource = selection;
+    state.ui.workflowInitialized = true;
+    renderWorkflowSourceBanner();
+    renderAll();
+    await switchView("workflow", { initialize: false });
+    setLoadMessage(
+      `\u5df2\u4ece\u8de8\u9879\u76ee\u603b\u89c8\u5e26\u5165 ${selection.itemIds.length} \u6761 Bug\uff1a${selection.projectName} / ${selection.trackerName} / ${selection.status}\u3002`,
+      "good",
+    );
+    window.scrollTo({ top: els.workflowView.offsetTop, behavior: "smooth" });
+  } catch (error) {
+    setMyBugsMessage(`\u65e0\u6cd5\u5e26\u5165\u6279\u91cf\u6d41\u8f6c\uff1a${error.message}`, "warn");
+  } finally {
+    state.loading.bugs = false;
+    updateConnectionButtons();
+    renderMyBugsDashboard();
+  }
+}
+
+function clearWorkflowSource() {
+  state.workflowSource = null;
+  renderWorkflowSourceBanner();
+}
+
+function renderWorkflowSourceBanner() {
+  if (!els.workflowSourceBanner) return;
+  const source = state.workflowSource;
+  els.workflowSourceBanner.hidden = !source;
+  els.workflowSourceBanner.textContent = source
+    ? `\u5f53\u524d\u5de5\u4f5c\u533a\u6765\u81ea\u201c\u6211\u7684 Bug \u603b\u89c8\u201d\uff1a${source.itemIds.length} \u6761\uff0c${source.projectName} / ${source.trackerName} / ${source.status}\u3002\u5207\u6362\u9879\u76ee\u6216 Tracker \u540e\u5c06\u6062\u590d\u666e\u901a\u52a0\u8f7d\u6a21\u5f0f\u3002`
+    : "";
+}
+
+function renderMyBugsDashboard() {
+  if (!els.myBugsTableBody) return;
+  const filtered = getFilteredMyBugs();
+  const pageSize = Math.max(1, Number(state.myBugPagination.pageSize) || 25);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const page = Math.min(pageCount, Math.max(1, state.myBugPagination.page));
+  state.myBugPagination.page = page;
+  const start = filtered.length ? (page - 1) * pageSize : 0;
+  const end = Math.min(start + pageSize, filtered.length);
+  const visible = filtered.slice(start, end);
+  const activeCount = state.myBugs.filter((bug) => !isClosedStatus(bug.status)).length;
+  const projectCount = new Set(state.myBugs.map((bug) => bug.project?.id || bug.project?.name).filter(Boolean)).size;
+  const roleCount = new Set(state.myBugs.flatMap((bug) => bug.matchedRoles || [])).size;
+  const userLabel = state.currentUser?.email || state.currentUser?.name || state.connection.username || "\u5c1a\u672a\u767b\u5f55";
+
+  els.currentUserBadge.textContent = state.currentUser ? `\u5df2\u767b\u5f55\uff1a${userLabel}` : "\u5c1a\u672a\u767b\u5f55";
+  els.currentUserBadge.classList.toggle("online", Boolean(state.currentUser));
+  els.myBugsSummary.textContent = state.myBugs.length
+    ? `\u5171 ${state.myBugs.length} \u6761\u4e0e\u6211\u76f8\u5173\u7684 Bug\uff0c\u7b5b\u9009\u540e ${filtered.length} \u6761\u3002`
+    : "\u767b\u5f55\u540e\uff0c\u8fd9\u91cc\u4f1a\u663e\u793a\u6240\u6709\u9879\u76ee\u4e2d\u6302\u540d\u4e3a\u4f60\u7684 Bug\u3002";
+  els.myBugsStats.innerHTML = [
+    ["\u6211\u7684 Bug", state.myBugs.length],
+    ["\u672a\u5173\u95ed", activeCount],
+    ["\u6d89\u53ca\u9879\u76ee", projectCount],
+    ["\u5173\u8054\u89d2\u8272", roleCount],
+  ].map(([label, value]) => `<div class="stat-card"><div class="stat-label">${label}</div><div class="stat-value">${value}</div></div>`).join("");
+
+  if (!visible.length) {
+    els.myBugsTableBody.innerHTML = `<tr><td colspan="9"><div class="empty-state">${state.myBugs.length ? "\u5f53\u524d\u7b5b\u9009\u6761\u4ef6\u4e0b\u6ca1\u6709\u5339\u914d\u7684 Bug\u3002" : "\u5c1a\u672a\u52a0\u8f7d\u4e0e\u4f60\u76f8\u5173\u7684 Bug\u3002"}</div></td></tr>`;
+  } else {
+    els.myBugsTableBody.innerHTML = visible.map((bug) => {
+      const url = getCodebeamerItemUrl(bug.id);
+      const status = normalizeWorkflowStatus(bug.status);
+      const analyzer = bug.fields?.["Bug Analyzer"] || "-";
+      const selected = state.mySelectedIds.has(Number(bug.id));
+      const compatibility = getMyBugCompatibility(bug);
+      const disabled = !selected && !compatibility.ok;
+      return `<tr class="${disabled ? "dashboard-row-incompatible" : ""}">
+        <td class="dashboard-checkbox-col"><input class="my-bug-select" data-item-id="${bug.id}" type="checkbox" ${selected ? "checked" : ""} ${disabled ? "disabled" : ""} title="${escapeAttr(disabled ? compatibility.reason : "\u9009\u62e9\u6b64 Bug")}" aria-label="\u9009\u62e9 Bug #${bug.id}" /></td>
+        <td><strong>${escapeHtml(bug.project?.name || "-")}</strong><div class="meta-line">${escapeHtml(bug.tracker?.name || "-")}</div></td>
+        <td><a class="bug-link" href="${escapeAttr(url)}" target="_blank" rel="noreferrer noopener">${bug.id}</a></td>
+        <td class="summary-cell"><a class="bug-link" href="${escapeAttr(url)}" target="_blank" rel="noreferrer noopener"><strong>${escapeHtml(shorten(bug.name, 110))}</strong></a><div class="meta-line">${escapeHtml(bug.priority || "\u672a\u8bbe\u7f6e\u4f18\u5148\u7ea7")}</div></td>
+        <td><span class="status-pill status-${escapeAttr(status.toLowerCase())}">${escapeHtml(status)}</span></td>
+        <td><div class="role-chip-list">${(bug.matchedRoles || []).map((role) => `<span class="role-chip">${escapeHtml(role)}</span>`).join("")}</div></td>
+        <td>${escapeHtml(analyzer)}</td>
+        <td>${escapeHtml(bug.assignedTo || "-")}</td>
+        <td>${escapeHtml(formatDashboardDate(bug.modifiedAt))}</td>
+      </tr>`;
+    }).join("");
+  }
+
+  els.myPaginationSummary.textContent = filtered.length ? `\u663e\u793a ${start + 1}-${end} / ${filtered.length} \u6761` : "0 \u6761";
+  els.myPageIndicator.textContent = `\u7b2c ${page} / ${pageCount} \u9875`;
+  els.myPageSizeSelect.value = String(pageSize);
+  els.myPrevPageButton.disabled = page <= 1 || state.loading.myBugs;
+  els.myNextPageButton.disabled = page >= pageCount || state.loading.myBugs;
+  const selected = getSelectedMyBugs();
+  const selectedSet = new Set(selected.map((bug) => Number(bug.id)));
+  const compatibleVisible = visible.filter((bug) => getMyBugCompatibility(bug).ok || selectedSet.has(Number(bug.id)));
+  const selectedCompatibleVisible = compatibleVisible.filter((bug) => selectedSet.has(Number(bug.id)));
+  els.mySelectAllVisible.checked = Boolean(compatibleVisible.length) && selectedCompatibleVisible.length === compatibleVisible.length;
+  els.mySelectAllVisible.indeterminate = selectedCompatibleVisible.length > 0 && selectedCompatibleVisible.length < compatibleVisible.length;
+  els.mySelectAllVisible.disabled = !compatibleVisible.length || state.loading.myBugs || state.loading.bugs;
+  els.myClearSelectionButton.disabled = !selected.length || state.loading.bugs;
+  els.sendSelectedToWorkflowButton.disabled = !selected.length || state.loading.bugs;
+  els.sendSelectedToWorkflowButton.textContent = state.loading.bugs ? "\u6b63\u5728\u51c6\u5907..." : `\u6279\u91cf\u6d41\u8f6c\u6240\u9009${selected.length ? ` (${selected.length})` : ""}`;
+  if (selected.length) {
+    const anchor = selected[0];
+    els.mySelectionHint.textContent = `\u5df2\u9009\u62e9 ${selected.length} \u6761\uff1a${anchor.project?.name || "-"} / ${anchor.tracker?.name || "-"} / ${normalizeWorkflowStatus(anchor.status)}\u3002\u5176\u4ed6\u9879\u76ee\u3001Tracker \u6216\u72b6\u6001\u6682\u4e0d\u53ef\u9009\u3002`;
+  } else {
+    els.mySelectionHint.textContent = "\u53ef\u9009\u62e9\u540c\u4e00\u9879\u76ee\u3001\u540c\u4e00 Tracker\u3001\u540c\u4e00\u72b6\u6001\u7684 Bug\uff0c\u5e26\u5165\u72ec\u7acb\u6279\u91cf\u6d41\u8f6c\u5de5\u4f5c\u533a\u3002";
+  }
+  populateMyBugFilterOptions();
+}
+
+function isClosedStatus(status) {
+  const normalized = normalizeWorkflowStatus(status).toLowerCase();
+  return normalized === "closed" || normalized === "close";
+}
+
+function formatDashboardDate(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
 }
 
 function renderAll() {

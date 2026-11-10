@@ -110,8 +110,10 @@ async function handleApiRequest(req, res, requestUrl) {
     }
 
     const nameIncludes = String(body.nameIncludes || "").trim().toLowerCase();
+    const bugTrackersOnly = body.bugTrackersOnly === true;
     const trackers = await cbFetchJson(auth, `/api/v3/projects/${projectId}/trackers`);
     const filtered = (Array.isArray(trackers) ? trackers : []).filter((tracker) => {
+      if (bugTrackersOnly && !isBugTracker(tracker)) return false;
       if (!nameIncludes) return true;
       return String(tracker.name || "").toLowerCase().includes(nameIncludes);
     });
@@ -211,6 +213,12 @@ async function handleApiRequest(req, res, requestUrl) {
     return;
   }
 
+  if (requestUrl.pathname === "/api/my-bugs") {
+    const dashboard = await loadMyBugsDashboard(auth);
+    sendJson(res, 200, dashboard);
+    return;
+  }
+
   if (requestUrl.pathname === "/api/current-user") {
     const user = await cbFetchJson(auth, "/rest/user/self");
     sendJson(res, 200, {
@@ -245,38 +253,42 @@ async function handleApiRequest(req, res, requestUrl) {
     return;
   }
 
-  if (requestUrl.pathname === "/api/bugs") {
+  if (requestUrl.pathname === "/api/bugs/selected") {
     const trackerId = Number(body.trackerId);
-    if (!trackerId) {
-      sendJson(res, 400, { error: "缺少 trackerId" });
+    const projectId = Number(body.projectId);
+    const itemIds = [...new Set((Array.isArray(body.itemIds) ? body.itemIds : []).map(Number).filter(Number.isInteger))];
+    if (!trackerId || !projectId) {
+      sendJson(res, 400, { error: "\u7f3a\u5c11 projectId \u6216 trackerId" });
+      return;
+    }
+    if (!itemIds.length) {
+      sendJson(res, 400, { error: "\u8bf7\u81f3\u5c11\u9009\u62e9\u4e00\u6761 Bug" });
+      return;
+    }
+    if (itemIds.length > 200) {
+      sendJson(res, 400, { error: "\u4e00\u6b21\u6700\u591a\u5e26\u5165 200 \u6761 Bug" });
       return;
     }
 
-    const tracker = await cbFetchJson(auth, `/api/v3/trackers/${trackerId}`);
-    const itemRefs = await fetchAllTrackerItemRefs(auth, trackerId);
-    const items = await mapWithConcurrency(itemRefs, 6, async (itemRef) => {
-      const item = await cbFetchJson(auth, `/api/v3/items/${itemRef.id}`);
-      const fields = await cbFetchJson(auth, `/api/v3/items/${itemRef.id}/fields`);
-      return {
-        id: itemRef.id,
-        name: itemRef.name,
-        item,
-        fields,
-      };
-    });
+    const payload = await loadTrackerBugDataset(auth, trackerId, itemIds);
+    if (Number(payload.tracker?.project?.id) !== projectId) {
+      sendJson(res, 400, { error: "\u6240\u9009 Tracker \u4e0d\u5c5e\u4e8e\u6307\u5b9a\u9879\u76ee" });
+      return;
+    }
+    sendJson(res, 200, payload.dataset);
+    return;
+  }
 
-    sendJson(res, 200, {
-      fetchedAt: new Date().toISOString(),
-      source: {
-        projectName: tracker.project?.name || "",
-        trackerName: tracker.name || "",
-        trackerId,
-        total: itemRefs.length,
-        exportedCount: items.length,
-        baseUrl: normalizeBaseUrl(auth.baseUrl),
-      },
-      items,
-    });
+  if (requestUrl.pathname === "/api/bugs") {
+    const trackerId = Number(body.trackerId);
+    if (!trackerId) {
+      sendJson(res, 400, { error: "\u7f3a\u5c11 trackerId" });
+      return;
+    }
+
+    const itemRefs = await fetchAllTrackerItemRefs(auth, trackerId);
+    const payload = await loadTrackerBugDataset(auth, trackerId, itemRefs.map((item) => item.id), itemRefs);
+    sendJson(res, 200, payload.dataset);
     return;
   }
 
@@ -916,6 +928,266 @@ async function serveStatic(req, res, requestUrl) {
   const contentType = MIME_TYPES[ext] || "application/octet-stream";
   res.writeHead(200, { "Content-Type": contentType });
   fs.createReadStream(filePath).pipe(res);
+}
+
+async function loadTrackerBugDataset(auth, trackerId, itemIds, knownItemRefs = []) {
+  const tracker = await cbFetchJson(auth, `/api/v3/trackers/${trackerId}`);
+  const refNames = new Map((Array.isArray(knownItemRefs) ? knownItemRefs : []).map((item) => [Number(item.id), item.name || ""]));
+  const items = await mapWithConcurrency(itemIds, 6, async (itemId) => {
+    const [item, fields] = await Promise.all([
+      cbFetchJson(auth, `/api/v3/items/${itemId}`),
+      cbFetchJson(auth, `/api/v3/items/${itemId}/fields`),
+    ]);
+    const actualTrackerId = Number(item?.tracker?.id || item?.trackerId || 0);
+    if (actualTrackerId !== Number(trackerId)) {
+      throw new Error(`Bug #${itemId} \u4e0d\u5c5e\u4e8e Tracker #${trackerId}`);
+    }
+    return {
+      id: itemId,
+      name: item?.name || refNames.get(itemId) || "",
+      item,
+      fields,
+    };
+  });
+
+  return {
+    tracker,
+    dataset: {
+      fetchedAt: new Date().toISOString(),
+      source: {
+        projectName: tracker.project?.name || "",
+        trackerName: tracker.name || "",
+        trackerId: Number(trackerId),
+        total: itemIds.length,
+        exportedCount: items.length,
+        baseUrl: normalizeBaseUrl(auth.baseUrl),
+      },
+      items,
+    },
+  };
+}
+
+async function loadMyBugsDashboard(auth) {
+  const [projectsPayload, userPayload] = await Promise.all([
+    cbFetchJson(auth, "/api/v3/projects"),
+    cbFetchJson(auth, "/rest/user/self"),
+  ]);
+  const projects = Array.isArray(projectsPayload) ? projectsPayload : [];
+  const user = userPayload && typeof userPayload === "object" ? userPayload : {};
+  const identity = buildUserIdentity(auth, user);
+  const warnings = [];
+
+  const projectTrackerGroups = await mapWithConcurrency(projects, 4, async (project) => {
+    try {
+      const trackersPayload = await cbFetchJson(auth, `/api/v3/projects/${project.id}/trackers`);
+      const trackers = (Array.isArray(trackersPayload) ? trackersPayload : [])
+        .filter(isBugTracker)
+        .map((tracker) => ({
+          ...tracker,
+          project: tracker.project || { id: project.id, name: project.name || "" },
+        }));
+      return trackers;
+    } catch (error) {
+      warnings.push(`\u9879\u76ee ${project.name || project.id} \u7684 Tracker \u8bfb\u53d6\u5931\u8d25\uff1a${error.message}`);
+      return [];
+    }
+  });
+
+  const bugTrackers = projectTrackerGroups.flat();
+  let scannedItemCount = 0;
+  let failedItemCount = 0;
+  const trackerResults = await mapWithConcurrency(bugTrackers, 3, async (tracker) => {
+    try {
+      const refs = await fetchAllTrackerItemRefs(auth, tracker.id);
+      scannedItemCount += refs.length;
+      const matches = await mapWithConcurrency(refs, 6, async (itemRef) => {
+        try {
+          const item = await cbFetchJson(auth, `/api/v3/items/${itemRef.id}`);
+          const matchedRoles = findCurrentUserRoles(item, identity);
+          if (!matchedRoles.length) return null;
+          return buildMyBugSummary(item, itemRef, tracker, matchedRoles);
+        } catch {
+          failedItemCount += 1;
+          return null;
+        }
+      });
+      return matches.filter(Boolean);
+    } catch (error) {
+      warnings.push(`Tracker ${tracker.project?.name || ""} / ${tracker.name || tracker.id} \u626b\u63cf\u5931\u8d25\uff1a${error.message}`);
+      return [];
+    }
+  });
+
+  if (failedItemCount) {
+    warnings.push(`${failedItemCount} \u6761 Bug \u56e0\u65e0\u6743\u9650\u6216\u8bfb\u53d6\u5f02\u5e38\u672a\u80fd\u68c0\u67e5\u3002`);
+  }
+
+  const items = trackerResults
+    .flat()
+    .sort((a, b) => String(b.modifiedAt || "").localeCompare(String(a.modifiedAt || "")));
+
+  return {
+    fetchedAt: new Date().toISOString(),
+    user,
+    projects,
+    items,
+    summary: {
+      projectCount: projects.length,
+      trackerCount: bugTrackers.length,
+      scannedItemCount,
+      matchedItemCount: items.length,
+      warningCount: warnings.length,
+    },
+    warnings,
+    baseUrl: normalizeBaseUrl(auth.baseUrl),
+  };
+}
+
+function isBugTracker(tracker) {
+  const candidates = [
+    tracker?.name,
+    tracker?.keyName,
+    tracker?.typeName,
+    tracker?.trackerType?.name,
+    tracker?.type?.name,
+    tracker?.type,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return /(^|[^a-z])bugs?([^a-z]|$)/i.test(candidates) || candidates.includes("defect");
+}
+
+function buildUserIdentity(auth, user) {
+  const ids = new Set();
+  const tokens = new Set();
+  [user?.id].filter((value) => value !== undefined && value !== null).forEach((value) => ids.add(String(value)));
+  [
+    auth.username,
+    user?.name,
+    user?.email,
+    user?.userName,
+    user?.username,
+    [user?.firstName, user?.lastName].filter(Boolean).join(" "),
+  ].forEach((value) => {
+    const normalized = normalizeIdentityToken(value);
+    if (normalized) tokens.add(normalized);
+  });
+  return { ids, tokens };
+}
+
+function normalizeIdentityToken(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function referenceMatchesIdentity(reference, identity, allowIdMatch = true) {
+  if (!reference) return false;
+  if (typeof reference !== "object") {
+    const normalized = normalizeIdentityToken(reference);
+    if (!normalized) return false;
+    if (identity.tokens.has(normalized)) return true;
+    return normalized
+      .split(/[;,|\n]+/)
+      .map((part) => part.trim())
+      .some((part) => identity.tokens.has(part));
+  }
+
+  const type = normalizeIdentityToken(reference.type || reference.typeName);
+  const isExplicitNonUserReference = type && !type.includes("user") && type.includes("reference");
+  if (
+    allowIdMatch &&
+    !isExplicitNonUserReference &&
+    reference.id !== undefined &&
+    identity.ids.has(String(reference.id))
+  ) {
+    return true;
+  }
+
+  return [reference.email, reference.name, reference.userName, reference.username]
+    .map(normalizeIdentityToken)
+    .filter(Boolean)
+    .some((value) => identity.tokens.has(value));
+}
+
+function referenceListMatchesIdentity(value, identity, allowIdMatch = true) {
+  const list = Array.isArray(value) ? value : value == null ? [] : [value];
+  return list.some((entry) => referenceMatchesIdentity(entry, identity, allowIdMatch));
+}
+
+function findCurrentUserRoles(item, identity) {
+  const roles = [];
+  const addRole = (role) => {
+    if (role && !roles.includes(role)) roles.push(role);
+  };
+
+  if (referenceListMatchesIdentity(item?.assignedTo, identity)) addRole("\u8d1f\u8d23\u4eba");
+  if (referenceMatchesIdentity(item?.createdBy, identity)) addRole("\u521b\u5efa\u4eba");
+  if (referenceListMatchesIdentity(item?.owners, identity)) addRole("Owner");
+
+  const fieldRoleLabels = new Map([
+    ["bug analyzer", "Bug Analyzer"],
+    ["bug tester", "Bug Tester"],
+    ["bug approver", "Bug Approver"],
+    ["bug reporter", "Bug Reporter"],
+    ["reporter", "Reporter"],
+    ["assignee", "Assignee"],
+  ]);
+
+  for (const field of Array.isArray(item?.customFields) ? item.customFields : []) {
+    const key = normalizeIdentityToken(field?.name);
+    const roleLabel = fieldRoleLabels.get(key) || String(field?.name || "").trim();
+    if (!roleLabel) continue;
+    const value = Array.isArray(field?.values) ? field.values : field?.value;
+    if (referenceListMatchesIdentity(value, identity, true)) addRole(roleLabel);
+  }
+
+  return roles;
+}
+
+function buildMyBugSummary(item, itemRef, tracker, matchedRoles) {
+  const customFields = Array.isArray(item?.customFields) ? item.customFields : [];
+  const fields = {};
+  for (const field of customFields) {
+    if (!field?.name) continue;
+    fields[field.name] = formatDashboardFieldValue(
+      Object.prototype.hasOwnProperty.call(field, "value") ? field.value : field.values,
+    );
+  }
+
+  return {
+    id: Number(item?.id || itemRef?.id),
+    name: item?.name || itemRef?.name || "",
+    project: {
+      id: Number(item?.project?.id || tracker?.project?.id || 0),
+      name: item?.project?.name || tracker?.project?.name || "",
+    },
+    tracker: {
+      id: Number(item?.tracker?.id || tracker?.id || 0),
+      name: item?.tracker?.name || tracker?.name || "",
+    },
+    status: item?.status?.name || "Unknown",
+    priority: item?.priority?.name || "",
+    assignedTo: formatDashboardFieldValue(item?.assignedTo),
+    createdBy: formatDashboardFieldValue(item?.createdBy),
+    modifiedAt: item?.modifiedAt || "",
+    createdAt: item?.createdAt || "",
+    matchedRoles,
+    fields,
+    affectsVersions: formatDashboardFieldValue(item?.versions),
+  };
+}
+
+function formatDashboardFieldValue(value) {
+  if (value === undefined || value === null) return "";
+  const list = Array.isArray(value) ? value : [value];
+  return list
+    .map((entry) => {
+      if (entry === undefined || entry === null) return "";
+      if (typeof entry === "object") return entry.name || entry.email || entry.id || "";
+      return String(entry);
+    })
+    .filter(Boolean)
+    .join("; ");
 }
 
 async function fetchAllTrackerItemRefs(auth, trackerId) {
